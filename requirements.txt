@@ -1,0 +1,16 @@
+# core (analysis venv)
+numpy
+pandas
+scikit-learn
+xgboost
+
+# feature extraction
+opencv-python-headless
+mediapipe==0.10.5          # blendshape FaceLandmarker + face detection
+timm                      # DINOv2 embedding
+libreface                 # FACS Action Units  (pulls torch; install CPU torch FIRST — see README)
+opensmile                 # audio eGeMAPS functionals
+soundfile                 # audio read
+
+# torch: install CPU build BEFORE libreface/timm to avoid the multi-GB CUDA pull:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu

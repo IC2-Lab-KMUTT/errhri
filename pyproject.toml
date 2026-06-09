@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "errhri-features"
+version = "0.1.0"
+description = "Shared feature-extraction + honest-evaluation toolkit for the ERR@HRI 3.0 challenge"
+requires-python = ">=3.10"
+dependencies = ["numpy", "pandas", "scikit-learn", "xgboost"]
+
+[tool.setuptools.packages.find]
+include = ["errhri_features*"]

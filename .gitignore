@@ -1,0 +1,10 @@
+# data + caches (DUA-governed — never commit videos or frame counts)
+cache/
+*.csv
+*.mp4
+*.task
+__pycache__/
+*.pyc
+venv/
+*.egg-info/
+official/
