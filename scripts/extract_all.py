@@ -1,11 +1,14 @@
 """Extract every (or selected) feature modality to the cache, for one or both tracks.
 
-    python -m scripts.extract_all --track 1 --modalities au audio embed blend
-    python -m scripts.extract_all --track all --modalities au
+    python -m scripts.build_index  --track all                     # FIRST: build the clip index
+    python -m scripts.extract_all  --track 1 --modalities au audio embed blend traj
+    python -m scripts.extract_all  --track all --modalities au
 
 Caches land in ERRHRI_CACHE (see errhri_features/config.py). Re-running resumes from cache.
-Heads-up: blend/au/embed want CPU-only torch (see README install caveat); run them from the
-CPU-torch venv. audio needs ffmpeg + opensmile.
+`scripts.build_index` must run once first — every extractor reads `index_t<track>.csv` for the
+clip list + labels. Heads-up: blend/au/embed/traj want CPU-only torch (see README install caveat);
+run them from the CPU-torch venv. audio needs ffmpeg + opensmile. `traj` (per-frame trajectory for
+the temporal GRU) needs the same FaceLandmarker model as `blend`.
 """
 import argparse
 from errhri_features.extractors import REGISTRY

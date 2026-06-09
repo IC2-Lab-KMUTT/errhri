@@ -7,9 +7,13 @@ features; the toolkit handles extraction, subject-grouped CV, the length-leak gu
 CIs, and the official windowed submission.
 
 > Curated findings live in **`SIGNAL_INVENTORY.md`** (signal/noise/fusion) and
-> **`DIMENSIONS_AND_TIMING.md`** (per-dimension + granular timing). Read those first — knowing
-> which features are mediocre/overlapping/noise is what keeps you from overfitting at N=23–36
-> subjects.
+> **`DIMENSIONS_AND_TIMING.md`** (per-dimension + granular timing). For the **granular,
+> per-feature correlation-strength breakdown** of *every* engineered feature on both tracks —
+> univariate separability, error-class direction, and the duration-leak flag, grouped by dimension
+> — see **`FEATURE_STRENGTH.md`** (regenerate it yourself with `python -m analysis.feature_report`).
+> Read those first — knowing which features are mediocre/overlapping/noise is what keeps you from
+> overfitting at N=23–36 subjects, and the per-feature table lets you make your own keep/drop calls
+> instead of trusting our verdicts.
 
 ## What's inside
 
@@ -54,12 +58,21 @@ export ERRHRI_T1_ROOT=/path/to/track1/trainval
 export ERRHRI_T2_ROOT=/path/to/track2/trainval
 ```
 
-## Extract features (once)
+## Build the cache (you start with nothing but the videos)
+
+The cache is **not** shipped (it's DUA-governed). Generate it from your copy of the data:
 
 ```bash
-python -m scripts.extract_all --track all --modalities au audio embed blend --workers 8
+# 1. the clip index — labels parsed from filenames + frame counts. EVERYTHING reads this.
+python -m scripts.build_index --track all          # -> index_t1.csv, index_t2.csv
+
+# 2. the feature caches — resumes if interrupted
+python -m scripts.extract_all --track all --modalities au audio embed blend traj --workers 8
 ```
-Resumes from cache. Writes `au_t1.csv`, `audio_t1.csv`, … to `ERRHRI_CACHE`.
+`build_index` must run first (extractors and `FeatureBank` read `index_t<track>.csv` for the clip
+list + labels). Then `extract_all` writes `au_t1.csv`, `audio_t1.csv`, `traj_t1.csv`, … to
+`ERRHRI_CACHE`. `traj` is the per-frame trajectory cache for the temporal GRU; `au`/`embed`/`blend`/
+`traj` need CPU torch + the FaceLandmarker model (see Install).
 
 ## Use it (the part you write)
 
@@ -89,6 +102,36 @@ print(late_fusion(1, oof, bank.y, bank.groups, bank.n_frames, method="stack"))
 
 `scripts/example_pipeline.py` is a full copy-paste reference (streams → fusion → submission).
 
+## The models + analysis pipelines (what we actually ran)
+
+`errhri_features.models` ships the validated estimators, not just a toy example:
+
+```python
+from errhri_features import make_xgb, ClipGRUClassifier, SequenceBank, CVEvaluator
+
+# tree streams (au / audio / embed / facial-static) on the aggregated FeatureBank matrix
+ev.run(lambda: make_xgb(scale_pos_weight=spw), bank, select="signal", leak_clean=True)
+
+# the whole-clip temporal GRU — the strongest single T1 stream (sees ORDER, not summary stats)
+seq = SequenceBank(track=1).load()                 # raw resampled trajectory, needs `traj` cache
+X, y, groups = seq.matrix()
+ev.run_matrix(lambda: ClipGRUClassifier(pos_weight=spw), X, y, groups, seq.n_frames)
+```
+
+`analysis/` reproduces every experiment behind the curated signal map — run them on your own cache
+to re-derive (and challenge) the verdicts:
+
+| `python -m analysis.<x>` | what it does |
+|---|---|
+| `feature_report` | per-feature univariate strength table → **`FEATURE_STRENGTH.md`** (both tracks) |
+| `dimension_breakdown` | per-semantic-dimension AUC, static vs dynamics split |
+| `timing_features` | granular timing-only signal (onset / peak / magnitude), length-clean |
+| `complementarity` | cross-stream fusion potential: prob/error decorrelation, oracle, late fusion |
+
+`complementarity` is the methodology that matters: it judges a stream by how its **errors
+decorrelate** from the others (fusion headroom), not by its solo score — which is why weak-but-
+orthogonal `audio`/`embed` earn a place in the T1 ensemble that lifts 0.623 → 0.674.
+
 ## Evaluation
 
 - **Group eval** (`CVEvaluator`): subject-grouped K-fold, per-fold threshold tuning on TRAIN
@@ -111,6 +154,7 @@ and `leak_clean=True` strips any feature that proxies it. Keep `leak` near 0 in 
   add to `extractors.REGISTRY`. You get parallelism/resume/caching for free.
 - **Stronger AU model / more prosody / different encoder** → swap the extractor; the FeatureBank,
   CV, leak guard, and fusion don't change.
-- **New model / pipeline** → any `fit`/`predict_proba` estimator into `CVEvaluator`; or build a
-  sequence model on the raw trajectories (smile/pose channels) — the timing analysis says onset +
-  peak + magnitude of the smile are the load-bearing signal, so make them first-class.
+- **New model / pipeline** → any `fit`/`predict_proba` estimator into `CVEvaluator`; the temporal
+  GRU on the raw trajectory already lives in `models.ClipGRUClassifier` + `SequenceBank` (start
+  there — the timing analysis says onset + peak + magnitude of the smile are the load-bearing
+  signal). Add a new finding by writing an `analysis/` module beside the existing four.

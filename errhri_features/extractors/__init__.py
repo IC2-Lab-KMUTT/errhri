@@ -8,13 +8,15 @@ from .action_units import ActionUnitExtractor
 from .audio import AudioExtractor
 from .embedding import EmbeddingExtractor
 from .blendshape import BlendshapeExtractor
+from .trajectory import TrajectoryExtractor
 
 REGISTRY = {
     "au": ActionUnitExtractor,
     "audio": AudioExtractor,
     "embed": EmbeddingExtractor,
     "blend": BlendshapeExtractor,
+    "traj": TrajectoryExtractor,
 }
 
 __all__ = ["BaseExtractor", "ActionUnitExtractor", "AudioExtractor", "EmbeddingExtractor",
-           "BlendshapeExtractor", "REGISTRY"]
+           "BlendshapeExtractor", "TrajectoryExtractor", "REGISTRY"]
