@@ -1,213 +1,201 @@
-# ERR@HRI 3.0 — Signal vs Noise Inventory
+# ERR@HRI 3.0 — Signal Inventory
 
-> Living document. Catalogs every input/feature family we have tested, its measured
-> discriminative strength, and a verdict: **SIGNAL** (keep), **WEAK** (small but real — keep
-> for the union), **NOISE** (drop), or **LEAK** (forbidden — absolute-duration proxy, must
-> never be a feature). The end goal is to take **all** signal (however small) into one
-> multi-modal architecture, then tune. Last updated mid-AU-extraction.
+Every input/feature family we tested, its **measured** strength, and a verdict. The goal: take
+**all** real signal (however small) into one multi-modal model, then tune.
 
-## Tasks & metrics
+**How to read the numbers.** Two metrics appear throughout — don't mix them up:
+- **macro-F1 / AUC (official)** — the *challenge* metrics, video-level, subject-grouped CV. T1 is
+  **macro-F1** (majority-vote aggregation), T2 is **AUC** (max-prob). These are what actually count.
+- **sep-AUC (diagnostic)** — a feature/dimension's univariate or multivariate *separability* (an
+  AUC ranker). Useful to compare signals, but a high sep-AUC ≠ a high macro-F1 (a strong ranker
+  still needs calibration + a tuned threshold to score macro-F1). Where we quote a sep-AUC for a
+  T1 stream, we also give its **macro-F1** so the comparison is honest.
+
+**Verdicts.** **PRIMARY** (load-bearing) · **SUPPORTING** (real, keep) · **WEAK-ORTHOGONAL** (small
+solo but decorrelated → earns its place in fusion) · **NOISE** (drop) · **LEAK** (forbidden
+duration proxy — never a feature).
+
+Companions: per-feature table → **`FEATURE_STRENGTH.md`**; granular per-channel timing →
+**`DIMENSIONS_AND_TIMING.md`**.
+
+---
+
+## 1 · Tasks & metrics
 
 | | Track 1 "BAD" | Track 2 "Bad Idea" |
 |---|---|---|
 | label | failure vs control | well vs poorly handled |
-| metric | **macro-F1** | **AUC** |
+| **official metric** | **macro-F1** | **AUC** |
 | video aggregation | majority vote | max prob |
 | balance | 87 / 13 (imbalanced) | 53 / 47 (balanced) |
 | size | 1319 clips / 36 subj | 685 clips / 23 subj |
 
-## Reference bars (honest, subject-grouped CV)
+---
 
-| bar | T1 macro-F1 | T2 AUC | note |
+## 2 · Headline — what we honestly achieved
+
+Subject-grouped CV, length-leak clean. **This is the scoreboard; the duration row is NOT a target —
+it is the leak we refuse to use.**
+
+| | T1 macro-F1 | T2 AUC | |
 |---|---|---|---|
-| official challenge baseline | 0.502 | 0.564 | provided |
-| **duration LEAK** | **0.702** | 0.591\* | forbidden; clip length only |
-| facial whole-clip GRU (best honest) | **0.638** | — | 21 discriminative ARKit channels |
-| facial attention-MIL | 0.630 | 0.546 | |
-| audio (eGeMAPS) | 0.528 | 0.491 | weak/none |
+| Official challenge baseline | 0.502 | 0.564 | provided |
+| **Our best honest result** | **0.674** | 0.558 | T1: 5-stream fusion · T2: facial only |
+| ~~duration-only "leak"~~ | ~~0.702~~ | — | ❌ forbidden (clip length, not skill) — excluded everywhere |
 
-\* T2 duration 0.591 is a raw-video artifact; the official T2 clips are trimmed, so the
-duration leak is effectively **T1-only**.
+**T1: macro-F1 0.674** [CI 0.637–0.713], AUC 0.804, length-leak −0.099 — **+0.17 over the 0.502
+baseline and above the 0.638 single-model facial ceiling, with zero leak.** Achieved by late-fusing
+five complementary streams (§7). The 0.702 "duration" number is higher only because it cheats; we
+beat the *honest* problem, which is what matters.
 
----
-
-## ⚠️ Methodology note — single-model metric deltas UNDERSTATE signal
-
-**Do not read "model A 0.638 vs model B 0.630" as "the thing A adds is worth only 0.008."**
-A single scalar metric is the *net* of gains and losses against the other model; it hides
-whether the two models are right about the **same** clips or **different** ones.
-
-- Two models both at ~0.63 can have **weakly-correlated errors** → each is correct on clips the
-  other misses. Their *union of competence* is much larger than either alone.
-- **Fusion gain scales with error decorrelation, not with the metric gap.** Decorrelated 0.63 +
-  0.63 models can fuse well above 0.63; perfectly-correlated ones cannot.
-- Therefore signal contribution must be judged by **prediction/error correlation** and an
-  **oracle / late-fusion estimate** across models (GRU vs MIL vs XGBoost vs audio vs AU), not by
-  ranking single-model scores.
-
-**Concrete measurement (planned/ongoing — `complementarity.py`):** dump per-clip OOF probability
-vectors for every model, then report (a) Pearson/Spearman between probability vectors, (b)
-correlation of the **error indicators** `1[wrong]`, (c) **oracle upper bound** (clip counted
-correct if *any* model is right), and (d) realized **late-fusion** (mean / logistic-stack of OOF
-probs) vs `max(single models)`. The same lens applies to every modality in this doc: audio's
-0.606 univariate AUC may be **orthogonal** to facial and so contribute to fusion far beyond its
-solo score — that is exactly why WEAK signals are kept.
-
-> Rule of thumb adopted here: a feature/model earns a place in the final ensemble if it is either
-> (i) strong solo, **or** (ii) weak solo but **decorrelated** from the backbone. Solo score alone
-> never decides inclusion.
+**T2 stays hard:** balanced and largely facial; best honest AUC ≈ 0.558 (≈ official baseline). Audio
+and the deep embedding are at chance here and are dropped; fusion is flat because every stream is
+weak (§7).
 
 ---
 
-## SIGNAL — confirmed discriminative, length-clean (KEEP)
+## 3 · Signal catalog (Track 1 streams)
 
-| feature family | source | track | strength / evidence | notes |
-|---|---|---|---|---|
-| **Amused / positive smile** | MediaPipe blendshapes: `cheekPuff`, `mouthSmile_L/R`, `dimple_L/R` | T1 (carries to T2) | top discriminative channels in separator + SHAP; drive the 0.638 GRU | reaction-to-failure often a nervous/amused smile |
-| **Head pose** | `pitch`, `yaw` (framing-invariant) | T1, T2 | repeatedly in top features; survives leak removal | looking down/away on error |
-| **Gaze aversion** | gaze direction | T1, T2 | discriminative in separator | aversion on failure |
-| **Blink** | eye-blink blendshapes | T1 | present in top set | |
-| **Velocity / temporal change** | per-frame Δ of blendshapes | T1 | adds over static means | dynamics, not absolute level |
-| **Ordered temporal trajectory** | whole-clip GRU over resampled L frames | T1 | GRU 0.638, static MIL/XGB ~0.630 — but see ⚠️ methodology note: the small *net* gap understates the signal; GRU and static models likely capture **partially non-overlapping** clips | the honest single-model facial ceiling |
-| **Threshold tuning** | per-fold macro-F1 threshold | T1 | meaningful lift under 87/13 imbalance | post-hoc, applies to any model |
-| **AU dynamics & expression instability** | libreface AU6/mouth-width/expr **std·range·velocity·entropy·#switches** | **T1** | multivariate **AUC 0.744** (length-clean); top univariate 0.69 | richest length-clean ranking signal; see RESULT section. Feed dynamics, not static levels |
+Solo = that stream alone, subject-grouped CV, signal-tier features, length-clean. macro-F1 is the
+official metric; sep-AUC given where it adds context.
 
-## WEAK — small but real signal (KEEP for the union, don't rely on alone)
+| stream | source | T1 macro-F1 (solo) | T1 sep-AUC | verdict | why |
+|---|---|---|---|---|---|
+| **Facial temporal (GRU)** | whole-clip ordered trajectory of 21 ARKit channels | **0.623** | — | **PRIMARY** | sees temporal *order*; the honest single-model ceiling |
+| **Facial static (MIL/XGB)** | per-clip blendshape aggregates | 0.622 | — | **PRIMARY** | static levels+dynamics; non-redundant with the GRU |
+| **AU dynamics (libreface)** | 12 AU + 12 presence + 8 expr + gaze/pose/geometry, ×12 stats (382) | 0.602 | **0.744** | **PRIMARY** | richest length-clean *ranker*; carriers are dynamics & instability, not static levels |
+| **DINOv2 embedding** | ViT-S/14 on face crop, PCA-in-fold | 0.580 | 0.674 | **WEAK-ORTHOGONAL** | learned pixel representation; error-corr ≈0.20 vs facial → adds +0.019 to the stack |
+| **Audio prosody** | openSMILE eGeMAPSv02 (88 functionals) | 0.579 | 0.606 | **WEAK-ORTHOGONAL** | 85% clips near-silent (headphones); most decorrelated stream (error-corr 0.18) |
 
-| feature family | source | track | strength | notes |
-|---|---|---|---|---|
-| **Audio prosody** | openSMILE eGeMAPSv02 (88 functionals) | **T1 only** | univariate AUC **0.606** (multivariate macro-F1 0.528) | 85% clips near-silent (headphones); weak but >chance on T1 |
-| **Seed ensembling** | mean of GRU seeds | T1 | +0.010 @0.5 | washes out after threshold tuning |
-| **Deep face embedding** | DINOv2 ViT-S/14 on face crop, PCA-in-fold | **T1** | solo macro-F1 0.580 / AUC 0.674; **lifts 5-stream fusion 0.655→0.674** | learned pixel representation, orthogonal (err-corr 0.20 vs facial); the one non-engineered input. Noise on T2 (0.508) |
+**What inside the face carries it** (the load-bearing behaviours, from separator + SHAP + AU):
+- **Amused / nervous smile** — `cheekPuff`, `mouthSmile_L/R`, `dimple`, AU6/AU12 — reaction to
+  one's own failure is often a smile. Top discriminative channel; drives the GRU.
+- **Expression instability** — `expr_entropy`, `expr_nswitch` — the face *changes more* on failure.
+- **Head pose** (pitch/yaw, framing-invariant) and **gaze aversion** — looking down/away on error.
+- **Blink** and **mouth-width dynamics** — present in the top set.
+- **Carriers are DYNAMICS, not static levels:** feed std / range / velocity / slope / entropy /
+  #switches, not just means. This is why temporal order helps.
 
-## NOISE — no signal beyond chance (DROP)
+---
 
-| feature family | source | track | evidence | why |
-|---|---|---|---|---|
-| Audio | eGeMAPS / energy-silence | **T2** | AUC 0.491 | near-silent; no signal |
-| Negative affect / frown | `browDown`, frown blendshapes | T1 | not discriminative | counter-intuitive but measured |
-| Spike / change-point presence | naive SpikeModel | T1 | ≈ chance | a "spike" exists in control too |
-| Global motion | frame-diff motion energy | T1 | not discriminative | |
-| Raw all-feature dump | all 60 blendshapes, untuned | T1 | overfits at N=36 subj | needs feature selection |
-| Frame size / position | `size`, `cx`, `cy` | both | framing-dependent | recording-setup artifact, excluded |
+## 4 · Timing signals (Track 1) — *when* the reaction happens
 
-## LEAK — forbidden (NEVER a feature) ⚠️
+Granular per-channel timing (relative to clip length, so leak-clean by construction). **Timing
+features alone score sep-AUC 0.788, length-clean** — the reaction's *shape in time* is real signal.
 
-| feature | corr with n_frames | inflation caused | status |
+| timing feature | verdict | what it measures |
+|---|---|---|
+| `auc` (reaction magnitude) | **SIGNAL — strongest** | area under the smile/jaw trajectory |
+| `amp` | **SIGNAL** | peak amplitude of the reaction |
+| `onset_frac` | **SIGNAL** | onset latency — when the reaction starts (length-clean) |
+| `early_bias` | **SIGNAL** | early-vs-late mass — the failure smile arrives **later** |
+| `peak_frac` | **SIGNAL** | time-to-peak |
+| `offset_frac` | WEAK | when it ends |
+| `dur_frac`, `decay` | WEAK-LEAKY | reaction length — borderline length-correlated, use with care |
+| `rise`, `ncross_rate` | NOISE | slope-in / burstiness — at/near chance |
+
+→ The signal is **magnitude + onset/peak timing of the smile**, not how long or how bursty it is.
+Per-channel detail in `DIMENSIONS_AND_TIMING.md`.
+
+---
+
+## 5 · Per-dimension strength (diagnostic sep-AUC)
+
+Multivariate AUC per semantic dimension, subject-grouped, length-clean. Shows *where* in the face
+the signal lives, and the **T1 ≫ T2** gap. (These are rankers; the official macro-F1 is reported at
+the stream/fusion level above.)
+
+| dimension | T1 sep-AUC | T2 sep-AUC | verdict |
 |---|---|---|---|
-| **clip duration** (`n_frames`, `len_sec`) | — | T1 0.702 alone | cheating; excluded |
-| `dyn_len_sec` | +0.70 | hybrid 0.678 → 0.636 when removed | excluded (CLEAN_DYN) |
-| `dyn_nbursts` | +0.52 | dynamics 0.676 → 0.607 when removed | excluded (CLEAN_DYN) |
+| expression (instability) | **0.682** | 0.545 | PRIMARY |
+| smile (cheek / lip-corner) | 0.648 | **0.588** | PRIMARY (T1) · best T2 dim |
+| mouth / jaw | 0.652 | 0.512 | SUPPORTING |
+| brow (raise / frown) | 0.652 | 0.521 | SUPPORTING |
+| eye (blink / aperture) | 0.647 | 0.541 | SUPPORTING |
+| nose (wrinkle / sneer) | 0.624 | 0.486 | SUPPORTING |
+| head pose | 0.611 | 0.525 | SUPPORTING |
+| gaze | 0.609 | 0.468 | SUPPORTING |
+| audio prosody | 0.606 | 0.491 | WEAK-ORTHOGONAL (T1) · NOISE (T2) |
+| deep embedding (DINOv2) | 0.674 | 0.508 | WEAK-ORTHOGONAL (T1) · NOISE (T2) |
+| negative-affect lips (frown/press/stretch) | 0.536 | 0.448 | **NOISE** |
 
-> The 0.67–0.70 numbers seen early were the **duration leak**, not facial skill. Any new
-> feature is checked for `|corr(feature, n_frames)| > 0.30` and discounted if it is a
-> duration proxy.
+On T1, **dynamics beat static levels in almost every dimension.** On T2 only smile clears chance —
+hence T2 is facial-only and hard.
 
 ---
 
-## RESULT — proper FACS AUs (libreface), 382 features — DONE
+## 6 · Noise & forbidden
 
-libreface per-frame (S=10): 12 AU intensities, 12 AU presence, 8 expressions, gaze, head pose,
-11 framing-invariant landmark-geometry ratios — each ×12 stats (mean/std/median/min/max/p10/p90/
-range/IQR/**slope**/**velocity**/**delta**) = **382 features**. Cached raw per-frame in
-`au_frames_t{track}.csv`; re-aggregate via `au_aggregate.py`.
+**NOISE — at/near chance, drop:**
 
-### Track 1 — **STRONG, length-clean** → SIGNAL (best ranking signal found)
-| metric | value | note |
+| family | track | evidence |
 |---|---|---|
-| multivariate XGBoost **AUC** | **0.744** | leak −0.044 (NOT duration); vs duration-AUC 0.639, facial ~0.64 |
-| macro-F1 @0.5 / @tuned | 0.608 / 0.542 [0.504,0.582] | threshold-unstable under 87/13 imbalance |
+| Audio (eGeMAPS / energy-silence) | **T2** | AUC 0.491 — near-silent, no signal |
+| Negative-affect lips (browDown, frown, press, stretch) | T1 | sep-AUC 0.536 — measured non-discriminative |
+| Spike / change-point presence (naive SpikeModel) | T1 | ≈ chance — a "spike" exists in control too |
+| Global motion (frame-diff energy) | T1 | not discriminative |
+| Raw all-feature dump (60 blendshapes, untuned) | T1 | overfits at N=36 subj — needs selection |
+| Frame size / position (`size`, `cx`, `cy`) | both | recording-setup artifact |
 
-Top length-clean univariate features (corr_len ≈ 0):
+**LEAK — forbidden, NEVER a feature ⚠️:**
 
-| feature | AUC | meaning |
-|---|---|---|
-| `expr_entropy` | 0.691 | expression **instability** over clip |
-| `geomouth_width_std/range/vel` | 0.69 | mouth-width **dynamics** |
-| `expr_neutral` (−) / `expr_happiness` (+) | 0.68 / 0.67 | less neutral / more amused on failure |
-| `expr_nswitch` | 0.657 | # expression switches |
-| `au6int_iqr` | 0.660 | AU6 (cheek-raiser/smile) intensity variability |
+| feature | corr with `n_frames` | effect | status |
+|---|---|---|---|
+| **clip duration** (`n_frames`, `len_sec`) | — | T1 macro-F1 0.702 *alone* | excluded — cheating |
+| `dyn_len_sec` | +0.70 | inflates 0.678 → 0.636 when removed | excluded |
+| `dyn_nbursts` | +0.52 | inflates 0.676 → 0.607 when removed | excluded |
 
-**Carriers are DYNAMICS & INSTABILITY (std/range/velocity/entropy/#switches), not static AU
-levels** — the reaction is a temporal change-event. Confirms why temporal order matters.
-⚠️ The 0.744 is **AUC** (strong ranker); the T1 metric is **macro-F1** where AU = 0.54–0.61, so
-this is "richest length-clean ranking signal," not yet "beats 0.638 macro-F1." Calibration +
-fusion is the path to convert ranking → macro-F1.
-
-### Track 2 — **WEAK** → keep for fusion only
-multivariate AUC **0.545** (≈ facial gmil 0.546, < official 0.564), leak +0.066 clean. Brow/mouth
-geometry weakly predictive (~0.58 univariate). No breakthrough; T2 stays hard.
-
-> Implication: on T1, **AU dynamics + expression instability** is now a primary stream — likely
-> decorrelated from the static blendshape backbone (different aggregation, validated AU model).
-> `complementarity.py` (task #94) will confirm fusion lift. Static AU *levels* underperform their
-> *dynamics* — feed slope/velocity/range/entropy, not just means, to the final model.
+T1 clips are raw mp4 → controls run longer than failures, so anything correlated with length is a
+duration proxy, not skill. Guard: drop any feature with `|corr(feature, n_frames)| > 0.30`
+(`leak_clean=True`); keep every reported `leak` near 0.
 
 ---
 
-## PER-DIMENSION + GRANULAR TIMING → see `DIMENSIONS_AND_TIMING.md`
+## 7 · Why fuse on complementarity (not solo score)
 
-Detailed companion: every facial/audio channel grouped into semantic dimensions (smile, mouth/jaw,
-brow, eye, nose, gaze, head-pose, expression, audio) with a static-vs-dynamics split, plus granular
-per-channel timing (onset/peak/duration/rise/decay/burst/magnitude). Headlines:
-- **T1: dynamics > static almost everywhere**; top dims expression-instability 0.682, mouth/brow/
-  smile/eye ~0.65; negative-affect lips = NOISE (0.536). **Timing-only AUC 0.788, length-clean** —
-  carriers are smile **magnitude (auc/amp)** + **onset/peak timing**; duration/burst-rate weak.
-- **T2: all dims weak (≤0.59)**; only smile (0.588) clears chance; timing-only 0.580.
+**A single metric hides whether two models are right about the same clips or different ones.** Two
+streams both at ~0.62 with *decorrelated errors* each cover clips the other misses — their union is
+far larger than either alone. **Fusion gain scales with error decorrelation, not the metric gap.**
+So a stream earns a place if it is *strong* **or** *weak-but-decorrelated* from the backbone — solo
+score alone never decides. (Measured with `analysis/complementarity.py`: per-stream OOF probs →
+prob/error correlation, oracle coverage, late fusion.)
 
-## COMPLEMENTARITY / FUSION RESULTS (`complementarity.py`, 2026-06-09) — methodology proven
+**Track 1 — fusion clears the ceiling ✅**
 
-Shared subject-grouped 5-fold OOF probs per stream → prob/error correlation + fusion. (CPU: the
-1080 Ti is sm_61, incompatible with the venv's cuDNN-9.2 torch, so GRU ran on CPU.)
+Prob-correlation: audio ⟂ everything (0.05–0.10), embed vs facial 0.27–0.36, AU vs facial 0.36–0.46,
+GRU vs static 0.57. **Oracle: ≥1 stream correct on 97.5% of clips** (single-best 80.4%) — large
+hidden headroom.
 
-### Track 1 — FUSION BEATS THE CEILING ✅ (5 streams incl. deep embedding)
-Solo macro-F1: facial-gru 0.623 · facial-static 0.622 · au 0.602 · audio 0.579 · embed 0.580.
-Prob-correlation: **audio ⟂ everything (0.05–0.10)**, embed vs facial 0.27–0.36, au vs facial
-0.36–0.46, gru vs static 0.57. Oracle: ≥1 stream correct on **97.5%** of clips (single-best acc
-80.4%) — large hidden headroom.
+| fusion (length-clean) | T1 macro-F1 | AUC | leak |
+|---|---|---|---|
+| 4-stream mean (gru+static+au+audio) | 0.657 | 0.797 | −0.095 |
+| 5-stream mean-prob (+ embed) | 0.666 [0.629, 0.705] | 0.804 | −0.092 |
+| **5-stream logistic stack** | **0.674** [0.637, 0.713] | 0.804 | −0.099 |
 
-| fusion | macro-F1 | AUC | leak | note |
-|---|---|---|---|---|
-| 4-stream mean (no embed) | 0.657 | 0.797 | −0.095 | facial-gru+static+au+audio |
-| **5-stream mean-prob** | **0.666** [0.629,0.705] | 0.804 | −0.092 | + DINOv2 embed |
-| **5-stream logistic stack** | **0.674** [0.637,0.713] | 0.804 | −0.099 | best honest result |
+Both "weak" streams earn their place by orthogonality: audio is the most decorrelated (error-corr
+0.18); the DINOv2 embedding is a different *representation* (error-corr 0.20) and adds +0.019.
 
-→ **+0.051 over best single (0.623), clears the 0.638 facial ceiling, length-clean, closing on the
-0.702 duration-leak bar with ZERO leak.** Both "weak" streams earn their place by orthogonality:
-audio is the most decorrelated (error-corr 0.18), the DINOv2 embedding is a different
-*representation* (error-corr 0.20) and adds +0.019 to the stack. Methodology proven twice: flat
-solo deltas hid real fusion gains; decorrelation drove them.
-
-### Track 2 — fusion ~flat (streams decorrelated but too weak)
-Solo AUC: facial-gru 0.556 · facial-static 0.546 · au 0.545 · **audio 0.491 (<chance)**.
-Prob-correlation 0.04–0.31 (decorrelated) but each stream too weak: mean-prob **0.558** ≈ best
-single 0.556; logistic stack 0.544 (audio drags). → **DROP audio on T2**; fusion needs a stronger
-base stream first.
+**Track 2 — fusion flat.** Streams are decorrelated (prob-corr 0.04–0.31) but each too weak:
+mean-prob AUC 0.558 ≈ best single (facial-gru 0.556); audio (0.491, <chance) drags the stack. →
+**drop audio on T2**; it needs a stronger base stream before fusion helps.
 
 ---
 
-## Implications for the final architecture
+## 8 · Final architecture direction
 
-0. **MEASURED FINAL DIRECTION (T1):** late-fuse **facial-gru + facial-static + AU + audio + DINOv2
-   embed** (logistic stack) → **macro-F1 0.674**, length-clean — beats the 0.638 facial ceiling and
-   every single stream, closing on the 0.702 duration-leak bar with honest signal. This is the
-   validated T1 architecture skeleton; next is calibration + tuning. **T2:** facial only
-   (gru+static+AU), **drop audio AND embed** (both ≈chance there); fusion flat (0.556) — needs a
-   stronger base stream.
-   **COVERAGE: all input TYPES now tested** — engineered (AU/blendshape/geometry/pose/gaze/expr,
-   static+dynamics+timing+sequence), audio prosody, AND learned pixel representation (DINOv2). The
-   only untested items are low-value/speculative: precise 3D iris-gaze, rPPG, higher-fps micro-expr,
-   ASR speech content.
-1. **Facial is the backbone** (0.638 honest). Smile + head-pose + gaze + temporal order are the
-   load-bearing signals.
-2. **Fuse on complementarity, not solo score** — include a stream if it is strong **or**
-   decorrelated from the backbone. T1 audio (0.606), AU-derived signal, and the static MIL/XGB
-   heads likely each cover clips the GRU misses; late-fusion/stacking should beat
-   `max(single models)`. Measure with `complementarity.py` before committing the final head.
-3. **Keep BOTH the sequence model and the static heads** — they are not redundant; the GRU
-   (temporal order) and MIL/XGBoost (static aggregates) capture partially non-overlapping signal,
-   so fuse them rather than picking the single best.
-4. **Imbalance handling** (threshold tuning, class weights) is mandatory on T1.
-5. **Hard exclusions:** duration and all `size/cx/cy` framing features stay out — they are
-   leaks/artifacts, not skill.
-6. **T2 is harder & balanced** — audio is dead there; rely on facial + AU only.
+1. **T1 — late-fuse five complementary streams** (logistic stack): facial-GRU + facial-static + AU
+   dynamics + audio + DINOv2 embedding → **macro-F1 0.674**, length-clean. This is the validated
+   skeleton; next is calibration + tuning (convert the strong AUC rankers into macro-F1).
+2. **T2 — facial only** (GRU + static + AU); **drop audio and embedding** (both ≈ chance). Fusion is
+   flat (≈0.558) — the priority is a stronger base stream, not more streams.
+3. **Keep both the sequence model and the static heads** — GRU (temporal order) and MIL/XGB (static
+   aggregates) capture partially non-overlapping clips; fuse, don't pick one.
+4. **Feed dynamics + timing, not static levels** — std/range/velocity/entropy/#switches and smile
+   magnitude + onset/peak timing are the carriers.
+5. **Imbalance handling is mandatory on T1** (class weights + per-fold threshold tuning).
+6. **Hard exclusions:** duration and all `size/cx/cy` framing features — leaks/artifacts, not skill.
+
+**Coverage: all input *types* tested** — engineered (AU / blendshape / geometry / pose / gaze /
+expression, in static + dynamics + timing + sequence forms), audio prosody, and a learned pixel
+representation (DINOv2). Remaining gaps are low-value/speculative: precise 3D iris-gaze, rPPG,
+higher-fps micro-expression, ASR speech content.
