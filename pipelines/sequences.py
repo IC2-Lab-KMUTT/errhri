@@ -16,8 +16,8 @@ from pathlib import Path
 import re
 import numpy as np
 import pandas as pd
-from .config import CACHE_DIR
-from .datasets import load_index
+from errhri_features.config import CACHE_DIR
+from errhri_features.datasets import load_index
 
 _CELL = re.compile(r"^t(\d+)__(.+)$")
 

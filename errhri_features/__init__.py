@@ -11,15 +11,16 @@ Quickstart:
                     bank, select="signal", leak_clean=True)
     print(report)   # subject-grouped macro-F1 + 95% CI + AUC + length-leak
 
+This package is the CORE signal pipeline: video -> features -> honest evaluation. It stays small
+and stable. Models and runnable recipes you tweak live OUTSIDE it, in the top-level `pipelines/`
+package (so swapping a model never touches the core); signal studies live in `analysis/`.
+
 See README.md for the full API and the curated signal map (SIGNAL_INVENTORY.md).
 """
 from .featurebank import FeatureBank, per_subject_norm
-from .sequences import SequenceBank
 from .evaluation import CVEvaluator, Report, late_fusion
 from .splits import subject_folds, iter_folds
-from .models import make_xgb, ClipGRUClassifier
 from . import metrics, leak, signal_map, submission, config
 
-__all__ = ["FeatureBank", "SequenceBank", "per_subject_norm", "CVEvaluator", "Report",
-           "late_fusion", "subject_folds", "iter_folds", "make_xgb", "ClipGRUClassifier",
-           "metrics", "leak", "signal_map", "submission", "config"]
+__all__ = ["FeatureBank", "per_subject_norm", "CVEvaluator", "Report", "late_fusion",
+           "subject_folds", "iter_folds", "metrics", "leak", "signal_map", "submission", "config"]

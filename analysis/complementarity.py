@@ -18,9 +18,10 @@ clip temporal GRU on SequenceBank) is included automatically if the `traj` cache
 """
 from __future__ import annotations
 import numpy as np
-from errhri_features import (FeatureBank, SequenceBank, CVEvaluator, late_fusion,
-                             make_xgb, ClipGRUClassifier, metrics as M)
+from errhri_features import FeatureBank, CVEvaluator, late_fusion, metrics as M
 from errhri_features.config import CACHE_DIR
+from pipelines.models import make_xgb, ClipGRUClassifier
+from pipelines.sequences import SequenceBank
 
 TREE_STREAMS = ["au", "audio", "embed"]
 

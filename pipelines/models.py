@@ -110,3 +110,33 @@ class ClipGRUClassifier:
         with torch.no_grad():
             p = torch.sigmoid(self._net(torch.tensor(X, device=self.device))).cpu().numpy()
         return np.column_stack([1.0 - p, p])
+
+
+# --------------------------------------------------------------------------- #
+#  The zoo: pick a tabular model by name + params -> a zero-arg factory
+# --------------------------------------------------------------------------- #
+def _logreg(**p):
+    from sklearn.linear_model import LogisticRegression
+    return LogisticRegression(max_iter=500, class_weight="balanced", **p)
+
+
+def _rf(scale_pos_weight=None, **p):
+    from sklearn.ensemble import RandomForestClassifier
+    return RandomForestClassifier(n_estimators=400, class_weight="balanced_subsample", **p)
+
+
+# name -> builder(**params) -> estimator. Add your own model here in one line.
+MODEL_ZOO = {"xgb": make_xgb, "logreg": _logreg, "rf": _rf}
+
+
+def make_model(name: str, **params):
+    """Return a ZERO-ARG factory `() -> estimator` for `CVEvaluator.run` — the validated default
+    config, overridable per call. e.g. `make_model("xgb", max_depth=4, scale_pos_weight=spw)`.
+
+    The temporal GRU is sequence-based (not a FeatureBank model), so it is not in this tabular zoo —
+    use `recipes.run_temporal(...)` for it.
+    """
+    if name not in MODEL_ZOO:
+        raise KeyError(f"unknown model '{name}'; options: {sorted(MODEL_ZOO)} (GRU -> run_temporal)")
+    builder = MODEL_ZOO[name]
+    return lambda: builder(**params)

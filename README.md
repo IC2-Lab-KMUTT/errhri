@@ -29,6 +29,21 @@ static levels and timing-only already scores AUC ≈ 0.79 (length-clean); late-f
 hits macro-F1 **0.674** vs the 0.638 facial ceiling, honest (the 0.702 duration baseline is a
 LEAK — see below).
 
+## Repository layout — three layers, separated on purpose
+
+```
+errhri_features/   CORE — video -> signal features -> honest evaluation.   Stable; don't edit to experiment.
+                   (extractors, FeatureBank, CVEvaluator, leak guard, metrics, signal_map, submission)
+pipelines/         YOUR LAYER — models + param-driven recipes. Swap a model / change params / recompose
+                   streams here without touching the core.  (models zoo, SequenceBank, recipes)
+analysis/          SIGNAL STUDIES — reproduce/challenge the signal map on your own cache.
+                   (feature_report -> FEATURE_STRENGTH.md, dimension_breakdown, timing_features, complementarity)
+scripts/           OPERATIONAL — build_index, extract_all, example_pipeline.
+```
+
+The split is the point: the core never changes when you try a new model — you only edit a `Stream`
+config or a recipe param in `pipelines/`. That keeps the signal pipeline readable while you iterate.
+
 ## Install
 
 torch must be the **CPU build, installed first**, or libreface/timm will drag in a multi-GB CUDA
@@ -74,49 +89,39 @@ list + labels). Then `extract_all` writes `au_t1.csv`, `audio_t1.csv`, `traj_t1.
 `ERRHRI_CACHE`. `traj` is the per-frame trajectory cache for the temporal GRU; `au`/`embed`/`blend`/
 `traj` need CPU torch + the FaceLandmarker model (see Install).
 
-## Use it (the part you write)
+## Use it (the part you write) — the recipe layer
+
+You compose `Stream`s and fuse them; defaults are the validated ones, and you change behaviour by
+changing **params**, never the core:
 
 ```python
-from errhri_features import FeatureBank, CVEvaluator, late_fusion
-from xgboost import XGBClassifier
+from pipelines.recipes import Stream, run_stream, run_fusion, run_temporal
 
-bank = FeatureBank(track=1, modalities=["au", "audio", "embed"]).load()
-spw  = (bank.y == 0).sum() / (bank.y == 1).sum()          # class imbalance (T1 is 87/13)
+# one stream — swap the model or override its params right here
+run_stream(1, Stream(modalities=("au", "audio"), model="xgb", params={"max_depth": 4}))
+run_stream(1, Stream(("au",), model="logreg"))          # MODEL_ZOO: xgb | logreg | rf
 
-ev = CVEvaluator(track=1)                                  # subject-grouped 5-fold
-rep = ev.run(lambda: XGBClassifier(scale_pos_weight=spw, tree_method="hist"),
-             bank, select="signal", leak_clean=True)       # drop noise + duration-proxy feats
-print(rep)        # macro-F1 + 95% CI + AUC + f1_neg + length-leak
+# late fusion (the validated T1 win); add the temporal GRU when the `traj` cache exists
+run_fusion(1, [Stream(("au",)), Stream(("audio",)), Stream(("embed",))], method="stack")
+run_fusion(1, [Stream(("au",)), Stream(("audio",))], include_temporal=True, gru={"hidden": 96})
+
+# the whole-clip temporal GRU alone — strongest single T1 stream (sees ORDER, not summary stats)
+run_temporal(1, hidden=64, epochs=40)
 ```
 
-`select=`: `"all"` · `"signal"` (drops measured-noise groups; drops audio+embed on T2) · or an
-explicit column list. `leak_clean=True` drops any feature with |corr(·, n_frames)| > 0.30.
+Each returns a core `Report` (primary metric + 95 % CI + AUC + f1_neg + length-leak). A `Stream`'s
+knobs: `modalities`, `model` (a key in `pipelines.models.MODEL_ZOO`), `select`
+(`"all"` · `"signal"` — drops measured-noise groups, and audio+embed on T2 — · or an explicit column
+list), `leak_clean` (strip |corr(·, n_frames)| > 0.30), and `params` (forwarded to the model).
 
-**Late fusion** (the validated T1 win):
-```python
-oof = {m: ev.run(lambda: XGBClassifier(scale_pos_weight=spw, tree_method="hist"),
-                 FeatureBank(1, [m]).load(), select="signal", leak_clean=True).oof_prob
-       for m in ["au", "audio", "embed"]}
-print(late_fusion(1, oof, bank.y, bank.groups, bank.n_frames, method="stack"))
-```
+**Add a model** in one line: drop a `name -> builder` into `pipelines/models.py:MODEL_ZOO`, then
+`Stream(model="yourname")`. The core, the leak guard, the CV and the fusion don't change.
 
-`scripts/example_pipeline.py` is a full copy-paste reference (streams → fusion → submission).
+Under the hood it's still just the core — `pipelines/recipes.py` wraps `FeatureBank` + `CVEvaluator`
++ `late_fusion`, so you can always drop down to them directly. `scripts/example_pipeline.py` is a
+full copy-paste reference (streams → fusion → submission).
 
-## The models + analysis pipelines (what we actually ran)
-
-`errhri_features.models` ships the validated estimators, not just a toy example:
-
-```python
-from errhri_features import make_xgb, ClipGRUClassifier, SequenceBank, CVEvaluator
-
-# tree streams (au / audio / embed / facial-static) on the aggregated FeatureBank matrix
-ev.run(lambda: make_xgb(scale_pos_weight=spw), bank, select="signal", leak_clean=True)
-
-# the whole-clip temporal GRU — the strongest single T1 stream (sees ORDER, not summary stats)
-seq = SequenceBank(track=1).load()                 # raw resampled trajectory, needs `traj` cache
-X, y, groups = seq.matrix()
-ev.run_matrix(lambda: ClipGRUClassifier(pos_weight=spw), X, y, groups, seq.n_frames)
-```
+## The analysis pipelines (what we actually ran)
 
 `analysis/` reproduces every experiment behind the curated signal map — run them on your own cache
 to re-derive (and challenge) the verdicts:
@@ -154,7 +159,9 @@ and `leak_clean=True` strips any feature that proxies it. Keep `leak` near 0 in 
   add to `extractors.REGISTRY`. You get parallelism/resume/caching for free.
 - **Stronger AU model / more prosody / different encoder** → swap the extractor; the FeatureBank,
   CV, leak guard, and fusion don't change.
-- **New model / pipeline** → any `fit`/`predict_proba` estimator into `CVEvaluator`; the temporal
-  GRU on the raw trajectory already lives in `models.ClipGRUClassifier` + `SequenceBank` (start
-  there — the timing analysis says onset + peak + magnitude of the smile are the load-bearing
-  signal). Add a new finding by writing an `analysis/` module beside the existing four.
+- **New model** → add a `name -> builder` line to `pipelines/models.py:MODEL_ZOO`, then
+  `Stream(model="yourname")`. Any `fit`/`predict_proba` estimator works. The temporal GRU on the
+  raw trajectory already lives in `pipelines/models.py` (`ClipGRUClassifier`) + `pipelines/
+  sequences.py` (`SequenceBank`) — use `recipes.run_temporal`.
+- **New recipe** → add a function to `pipelines/recipes.py`; it wraps the core, so the signal
+  pipeline stays untouched. **New finding** → add an `analysis/` module beside the existing four.
