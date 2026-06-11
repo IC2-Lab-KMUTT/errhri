@@ -315,3 +315,12 @@ for torch. Local background monitor tasks die between turns; use server-side set
   positive-unlabeled framing (control = reliable negative), stimulus-fold CIs.
 - Caches durably backed up (server `cache_backup/` + local mirror) — never re-extract for new fusion
   experiments.
+
+## 2026-06-11 session — owned bests + bundle v2
+- **T1 owned best 0.7365** (`run_t1_lopo_stack.py`, OOFs in `lopo_oof_t1.csv`); **T2 owned best 0.6262**
+  (`run_t2_owned.py`, OOFs in `hse_owned_oof_t2.csv`). Recipes + audit in METHOD.md §2026-06-11.
+- HSEmotion per-frame matrices (philix's, with consent): server `/home/ic2/research/errhri/philix_feats/t{1,2}_feats.npz`.
+- **Bundle v2** (all 43 cache CSVs + HSE matrices + scripts, AES-256 enc, same password as v1):
+  server `/home/ic2/research/errhri/bundle/errhri_bundle_v2.zip.enc` (+ .sha256). Server-only — do NOT host publicly (DUA).
+- Run LGBM with `n_jobs=4 OMP_NUM_THREADS=4` on ic2 (n_jobs=-1 thrashes). FaceMesh extractors: dream-venv
+  (mediapipe 0.10.21; 0.10.35 dropped mp.solutions).

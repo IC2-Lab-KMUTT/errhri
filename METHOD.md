@@ -84,3 +84,51 @@ clips run longer). Any feature correlated with `n_frames` is a duration proxy, n
 using it is cheating + barred by the organisers as non-real-time. `length_corr` / `clean_columns` flag
 and strip any feature with |corr(n_frames)| > 0.30. Fixed frame sampling (§1) + length-normalized
 trajectories (§3) keep shape, not duration, as the signal.
+
+---
+
+# Session 2026-06-11 — HSEmotion adoption, LOPO migration, owned bests
+
+## New best results (honest, official eval, fully owned — no teammate-OOF dependence)
+| Track | metric | old | **new owned best** | recipe |
+|---|---|---|---|---|
+| T1 | video macro-F1 | 0.696 | **0.7365** | LOPO stack: `HSE_owned + gaze + au_xgb + pose + audio + blend` (`run_t1_lopo_stack.py`) |
+| T2 | video AUC | 0.576 | **0.6262** | `HSE_tail60_pz + gaze + HSE_tail90_pz + TD_gru_attn_pz` (`run_t2_owned.py`) |
+
+## The HSEmotion stream (the new signal class)
+Per-frame **MediaPipe(68: blendshapes+headpose+geometry) + HSEmotion `enet_b0_8_va_mtl`** (1280-d AffectNet
+embedding + 8 emotion logits + valence/arousal = 1290-d ×2 pooling = 2560-d), sampled at 5 fps over the whole
+clip. Recipe (philix's, reproduced + audited): per-participant z-score of ALL columns (incl. embedding) →
+PCA-128 on the embedding block → sliding-window stats (mean/std/min/max/q25/q75/slope/|vel|/pos; T1 ws25/slide10,
+T2 ws10/slide2 on tail-60/90 segments) → leak_guard (drop |corr n_frames|>0.30) → class-weighted LGBM
+(`scale_pos_weight`) → **mean** aggregation over windows → LOPO. Solo: T1 0.820 AUC / 0.704 F1; T2 tail60 0.605.
+Why it wins: it is a *learned affect representation* — a different representation space from all our geometric
+streams, hence genuinely orthogonal in fusion. Build scripts: `his_lgbm_slim.py` (T1), `run_t2_owned.py` (T2).
+
+## Protocol upgrades adopted
+- **LOPO replaces 5-fold** everywhere (tabular streams + meta-CV + thresholds): +0.018 AUC / +0.033 F1 on
+  identical features. Not a leak — more train data per fold, matches train-on-all-trainval deployment.
+- **pz-ranking** (per-participant z-score of *video scores*): label-free, legitimate for batch-AUC submissions;
+  worth +0.02 on T2 streams.
+
+## Teammate-pipeline audit (philix) — leaks found and quantified
+His LOPO model CV and features are honest. Three selection-on-labels leaks inflate his *reported* numbers:
+1. **T1 decision rule** — `tune_rule` picks global/ppct/pz threshold on full OOF labels: 0.728 honest → 0.7433 (+0.015).
+2. **T1 window+param grid** — window-size sweep and LGBM grid scored on full OOF labels: ~+0.03 AUC (his 0.851
+   vs 0.820 for the fixed recipe).
+3. **T2 fusion weights** — >100-candidate pz-fusion grid, `candidates[0]` on full labels: 0.6315 reported vs
+   0.6119 nested; his best single honest stream (0.6238) actually beats his own nested fusion.
+
+## Negative results (representation > pipeline, confirmed 3 ways)
+- His window-table template on OUR geometry seqs (au_seq+gaze_seq): 0.689 AUC — *worse* than our old temporal
+  streams (~0.72). The template doesn't rescue weak representations.
+- T2 gaze-scanpath reading dynamics (full-fps iris, saccades/regressions/fixations/blinks, 5s tails): 0.513 ≈
+  chance. (`run_t2_scanpath.py`)
+- T2 clips are **silent** (whisper: no speech) → the stimulus text that defines the T2 label is not observable.
+  T2's ~0.63 cap is an observability limit, structural — not a feature plateau.
+
+## Ops gotchas
+- LGBM `n_jobs=-1` on the shared 12-core box → 35-thread thrash (>1h for a 5-min job). Use `n_jobs=4` +
+  `OMP_NUM_THREADS=4`.
+- mediapipe ≥0.10.3x drops legacy `mp.solutions` — use dream-venv (0.10.21) for FaceMesh extractors.
+- `df.to_numpy()` may return read-only views; `.copy()` before in-place normalization.
