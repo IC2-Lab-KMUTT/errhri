@@ -86,3 +86,83 @@ class SequenceBank:
             sd = block.std(axis=(0, 1), keepdims=True); sd[sd < 1e-9] = 1.0
             Xn[m] = (block - mu) / sd
         return np.nan_to_num(Xn)
+
+
+# continuous per-frame channels available in the `au_frames` cache (skip presence binaries + expr)
+_AU_FRAME_CHANNELS = (
+    ["au1_int", "au2_int", "au4_int", "au5_int", "au6_int", "au9_int", "au12_int", "au15_int",
+     "au17_int", "au20_int", "au25_int", "au26_int"]
+    + ["gaze_yaw", "gaze_pitch", "pitch", "yaw", "roll"]
+    + ["geo_mouth_open", "geo_mouth_width", "geo_eye_open_l", "geo_eye_open_r", "geo_brow_eye_l",
+       "geo_brow_eye_r", "geo_inner_brow", "geo_nose_lip", "geo_jaw_open", "geo_lipcorner_asym",
+       "geo_eye_asym"])
+
+
+def _resample(values, L):
+    """Linear-resample a 1-D channel to L points (interp NaNs, pad constants)."""
+    v = pd.Series(values).interpolate(limit_direction="both").to_numpy(float)
+    if not np.isfinite(v).any():
+        return np.zeros(L)
+    v = np.nan_to_num(v, nan=float(np.nanmean(v)))
+    if len(v) == 1:
+        return np.repeat(v, L)
+    return np.interp(np.linspace(0, 1, L), np.linspace(0, 1, len(v)), v)
+
+
+class FrameSequenceBank:
+    """Per-frame trajectory tensor from the `au_frames` cache (raw libreface per-frame rows) —
+    no `traj`/FaceLandmarker needed. Gives the temporal models a real multivariate AU/pose/geometry
+    time series (≈10 frames × 28 channels) to chew on. Same (X, y, groups) interface as SequenceBank.
+
+        fs = FrameSequenceBank(track=1).load()
+        X, y, groups = fs.matrix()          # X: (N, L, C)
+    """
+
+    def __init__(self, track, cache_dir=None, L=10, channels=None, cache_name="au_frames"):
+        self.track = track
+        self.cache_dir = Path(cache_dir or CACHE_DIR)
+        self.cache_name = cache_name
+        self.L = L
+        self.channels = list(channels) if channels else list(_AU_FRAME_CHANNELS)
+        self.df = None
+        self._tensor = None
+
+    def load(self):
+        fp = self.cache_dir / f"{self.cache_name}_t{self.track}.csv"
+        if not fp.exists():
+            raise FileNotFoundError(f"missing per-frame cache {fp}")
+        fr = pd.read_csv(fp)
+        fr["participant"] = fr.participant.astype(str); fr["video"] = fr.video.astype(str)
+        chans = [c for c in self.channels if c in fr.columns]
+        self.channels = chans
+        order = "frame" if "frame" in fr.columns else None
+        traj = {}
+        for key, g in fr.groupby(["participant", "video"]):
+            if order:
+                g = g.sort_values(order)
+            arr = np.stack([_resample(g[c].to_numpy(float), self.L) for c in chans], axis=1)
+            traj[key] = arr                                  # (L, C)
+        idx = load_index(self.track)[["participant", "video", "label", "n_frames"]]
+        idx["participant"] = idx.participant.astype(str); idx["video"] = idx.video.astype(str)
+        keep = [(p, v) in traj for p, v in zip(idx.participant, idx.video)]
+        self.df = idx[keep].reset_index(drop=True)
+        self._tensor = np.stack([traj[(p, v)] for p, v in zip(self.df.participant, self.df.video)])
+        return self
+
+    @property
+    def y(self):
+        return self.df.label.to_numpy(int)
+
+    @property
+    def groups(self):
+        return self.df.participant.to_numpy()
+
+    @property
+    def n_frames(self):
+        return self.df.n_frames.to_numpy(float)
+
+    def matrix(self, normalize=True):
+        X = self._tensor
+        if normalize:
+            X = SequenceBank._subject_norm(X, self.groups)
+        return X, self.y, self.groups

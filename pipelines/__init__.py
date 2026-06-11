@@ -11,9 +11,11 @@ without touching the core signal pipeline.
     from pipelines.recipes import Stream, run_stream, run_fusion
     run_stream(1, Stream(modalities=("au", "audio"), model="xgb", params={"max_depth": 4}))
 """
-from .models import make_model, make_xgb, ClipGRUClassifier, MODEL_ZOO
-from .sequences import SequenceBank
-from .recipes import Stream, run_stream, run_fusion, run_temporal
+from .models import make_model, make_xgb, ClipGRUClassifier, RocketClassifier, MODEL_ZOO
+from .sequences import SequenceBank, FrameSequenceBank
+from .recipes import (Stream, run_stream, run_fusion, run_temporal, run_temporal_rocket,
+                      run_research_fusion)
 
-__all__ = ["make_model", "make_xgb", "ClipGRUClassifier", "MODEL_ZOO", "SequenceBank",
-           "Stream", "run_stream", "run_fusion", "run_temporal"]
+__all__ = ["make_model", "make_xgb", "ClipGRUClassifier", "RocketClassifier", "MODEL_ZOO",
+           "SequenceBank", "FrameSequenceBank", "Stream", "run_stream", "run_fusion",
+           "run_temporal", "run_temporal_rocket", "run_research_fusion"]

@@ -113,6 +113,72 @@ class ClipGRUClassifier:
 
 
 # --------------------------------------------------------------------------- #
+#  ROCKET — random convolutional kernels + linear head (sequence model)
+# --------------------------------------------------------------------------- #
+class RocketClassifier:
+    """Dependency-free ROCKET for short multivariate series (the MiniRocket idea without sktime).
+
+    Random 1-D conv kernels over time → PPV + global-max pooling → standardize → logistic. A third
+    inductive bias distinct from the GRU (recurrence) and the trees (summary stats): random
+    convolutional features, the ERR@HRI-relevant "fast + regularizing on small data" view. PPV
+    (fraction of positive activations) is the regularizing feature MiniRocket relies on.
+
+    Input X: (N, L, C). sklearn-style fit / predict_proba.
+    """
+
+    def __init__(self, n_kernels=1000, kernel_lengths=(3, 5, 7), seed=0, C=1.0,
+                 class_weight="balanced"):
+        self.n_kernels, self.kernel_lengths = n_kernels, kernel_lengths
+        self.seed, self.C, self.class_weight = seed, C, class_weight
+        self._kernels = None
+
+    def _make_kernels(self, L, n_ch):
+        rng = np.random.default_rng(self.seed)
+        ks = []
+        for _ in range(self.n_kernels):
+            k = int(rng.choice(self.kernel_lengths))
+            max_d = max(1, (L - 1) // (k - 1)) if k > 1 else 1
+            d = int(rng.integers(1, max_d + 1))
+            if (k - 1) * d + 1 > L:
+                d = 1
+            ch = int(rng.integers(0, n_ch))
+            w = rng.standard_normal(k); w -= w.mean()
+            ks.append((ch, w, d, float(rng.standard_normal())))
+        return ks
+
+    def _transform(self, X):
+        N, L, _ = X.shape
+        feats = np.empty((N, len(self._kernels) * 2), np.float32)
+        for i, (ch, w, d, b) in enumerate(self._kernels):
+            k = len(w); span = (k - 1) * d + 1
+            npos = L - span + 1
+            if npos < 1:
+                feats[:, 2 * i] = 0.0; feats[:, 2 * i + 1] = 0.0; continue
+            conv = np.full((N, npos), b, np.float32)
+            xc = X[:, :, ch]
+            for j in range(k):
+                conv += w[j] * xc[:, j * d: j * d + npos]
+            feats[:, 2 * i] = (conv > 0).mean(1)        # PPV
+            feats[:, 2 * i + 1] = conv.max(1)           # global max
+        return feats
+
+    def fit(self, X, y):
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.linear_model import LogisticRegression
+        X = np.nan_to_num(np.asarray(X, np.float32))
+        self._kernels = self._make_kernels(X.shape[1], X.shape[2])
+        F = self._transform(X)
+        self._scaler = StandardScaler().fit(F)
+        self._clf = LogisticRegression(max_iter=1000, C=self.C,
+                                       class_weight=self.class_weight).fit(self._scaler.transform(F), y)
+        return self
+
+    def predict_proba(self, X):
+        X = np.nan_to_num(np.asarray(X, np.float32))
+        return self._clf.predict_proba(self._scaler.transform(self._transform(X)))
+
+
+# --------------------------------------------------------------------------- #
 #  The zoo: pick a tabular model by name + params -> a zero-arg factory
 # --------------------------------------------------------------------------- #
 def _logreg(**p):
@@ -122,7 +188,9 @@ def _logreg(**p):
 
 def _rf(scale_pos_weight=None, **p):
     from sklearn.ensemble import RandomForestClassifier
-    return RandomForestClassifier(n_estimators=400, class_weight="balanced_subsample", **p)
+    p.setdefault("n_estimators", 400)
+    p.setdefault("class_weight", "balanced_subsample")
+    return RandomForestClassifier(**p)  # scale_pos_weight is N/A for RF; swallowed + ignored
 
 
 # name -> builder(**params) -> estimator. Add your own model here in one line.

@@ -9,6 +9,11 @@ from .audio import AudioExtractor
 from .embedding import EmbeddingExtractor
 from .blendshape import BlendshapeExtractor
 from .trajectory import TrajectoryExtractor
+from .pose import PoseExtractor
+from .faceemb import FaceEmbExtractor
+from .au_graph import AUGraphExtractor
+from .gaze import GazeExtractor
+from .dense_seq import AUSeqExtractor, GazeSeqExtractor
 
 REGISTRY = {
     "au": ActionUnitExtractor,
@@ -16,7 +21,14 @@ REGISTRY = {
     "embed": EmbeddingExtractor,
     "blend": BlendshapeExtractor,
     "traj": TrajectoryExtractor,
+    "pose": PoseExtractor,
+    "faceemb": FaceEmbExtractor,
+    "au_graph": AUGraphExtractor,
+    "gaze": GazeExtractor,
+    "au_seq": AUSeqExtractor,
+    "gaze_seq": GazeSeqExtractor,
 }
 
 __all__ = ["BaseExtractor", "ActionUnitExtractor", "AudioExtractor", "EmbeddingExtractor",
-           "BlendshapeExtractor", "TrajectoryExtractor", "REGISTRY"]
+           "BlendshapeExtractor", "TrajectoryExtractor", "PoseExtractor", "FaceEmbExtractor",
+           "AUGraphExtractor", "GazeExtractor", "REGISTRY"]
